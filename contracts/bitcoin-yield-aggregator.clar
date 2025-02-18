@@ -194,3 +194,69 @@
         ))
     )
 )
+
+;; User Operations: Withdrawals
+(define-public (withdraw 
+    (protocol-id uint) 
+    (amount uint)
+)
+    (let 
+        (
+            (user-deposit (unwrap! 
+                (map-get? user-deposits {user: tx-sender, protocol-id: protocol-id}) 
+                ERR-INSUFFICIENT-FUNDS
+            ))
+            (yield (unwrap! (calculate-yield protocol-id tx-sender) ERR-WITHDRAWAL-FAILED))
+            (current-protocol-deposits (default-to 
+                {total-deposit: u0}
+                (map-get? protocol-total-deposits {protocol-id: protocol-id})
+            ))
+        )
+        (asserts! (is-valid-protocol-id protocol-id) ERR-INVALID-INPUT)
+        (asserts! (is-valid-deposit-amount amount) ERR-INVALID-INPUT)
+        (asserts! (>= (get amount user-deposit) amount) ERR-INSUFFICIENT-FUNDS)
+
+        (map-set user-deposits 
+            {user: tx-sender, protocol-id: protocol-id}
+            {amount: (- (get amount user-deposit) amount), deposit-time: block-height}
+        )
+        (map-set protocol-total-deposits 
+            {protocol-id: protocol-id} 
+            {total-deposit: (- (get total-deposit current-protocol-deposits) amount)}
+        )
+
+        (ok (+ amount yield))
+    )
+)
+
+;; Risk Management
+(define-public (deactivate-protocol (protocol-id uint))
+    (begin
+        (asserts! (is-contract-owner tx-sender) ERR-UNAUTHORIZED)
+        (asserts! (is-valid-protocol-id protocol-id) ERR-INVALID-INPUT)
+        (map-set supported-protocols 
+            {protocol-id: protocol-id} 
+            (merge 
+                (unwrap! 
+                    (map-get? supported-protocols {protocol-id: protocol-id}) 
+                    ERR-INVALID-PROTOCOL
+                )
+                {active: false}
+            )
+        )
+        (var-set total-protocols (- (var-get total-protocols) u1))
+        (ok true)
+    )
+)
+
+;; Protocol Initialization
+(define-public (initialize-protocols)
+    (begin
+        (try! (add-protocol u1 "Stacks Yield Protocol" u500 u20))  ;; 5.00% APY, 20% max allocation
+        (try! (add-protocol u2 "Bitcoin Lightning Yield" u750 u30)) ;; 7.50% APY, 30% max allocation
+        (ok true)
+    )
+)
+
+;; Initialize Contract
+(try! (initialize-protocols))
