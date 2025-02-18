@@ -123,3 +123,74 @@
         (ok true)
     )
 )
+
+;; User Operations: Deposits
+(define-public (deposit 
+    (protocol-id uint) 
+    (amount uint)
+)
+    (let 
+        (
+            (protocol (unwrap! 
+                (map-get? supported-protocols {protocol-id: protocol-id}) 
+                ERR-INVALID-PROTOCOL
+            ))
+            (current-total-deposits (default-to 
+                {total-deposit: u0} 
+                (map-get? protocol-total-deposits {protocol-id: protocol-id})
+            ))
+            (max-protocol-deposit (/ 
+                (* (get max-allocation-percentage protocol) BASE-DENOMINATION) 
+                u100
+            ))
+        )
+        (asserts! (is-valid-protocol-id protocol-id) ERR-INVALID-INPUT)
+        (asserts! (is-valid-deposit-amount amount) ERR-INVALID-INPUT)
+        (asserts! (get active protocol) ERR-INVALID-PROTOCOL)
+        (asserts! 
+            (<= (+ (get total-deposit current-total-deposits) amount) max-protocol-deposit) 
+            ERR-PROTOCOL-LIMIT-REACHED
+        )
+
+        (map-set user-deposits 
+            {user: tx-sender, protocol-id: protocol-id}
+            {amount: amount, deposit-time: block-height}
+        )
+        (map-set protocol-total-deposits 
+            {protocol-id: protocol-id} 
+            {total-deposit: (+ (get total-deposit current-total-deposits) amount)}
+        )
+
+        (ok true)
+    )
+)
+
+;; Yield Calculation
+(define-read-only (calculate-yield 
+    (protocol-id uint) 
+    (user principal)
+)
+    (let 
+        (
+            (protocol (unwrap! 
+                (map-get? supported-protocols {protocol-id: protocol-id}) 
+                ERR-INVALID-PROTOCOL
+            ))
+            (user-deposit (unwrap! 
+                (map-get? user-deposits {user: user, protocol-id: protocol-id}) 
+                ERR-INSUFFICIENT-FUNDS
+            ))
+            (blocks-since-deposit (- block-height (get deposit-time user-deposit)))
+            (annual-yield (/ 
+                (* (get base-apy protocol) (get amount user-deposit)) 
+                BASE-DENOMINATION
+            ))
+        )
+        (asserts! (is-valid-protocol-id protocol-id) ERR-INVALID-INPUT)
+        
+        (ok (/ 
+            (* annual-yield blocks-since-deposit) 
+            u52596  ;; Approximate blocks in a year
+        ))
+    )
+)
